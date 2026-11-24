@@ -181,6 +181,17 @@ temporären Ordner und werden beim Neurechnen eines Schritts verworfen.
 `metrics` ist die Wahrheit darüber, was gelaufen ist: Datei löschen heißt Raster
 neu rechnen.
 
+## Fehler und Logs
+
+Schlägt ein Schritt fehl, steht die Meldung unten rechts, sie lässt sich markieren.
+„Fehler kopieren“ legt Ordner, Raster, Schritt und den ganzen Python-Traceback in
+die Zwischenablage. Mitgeschrieben wird an zwei Stellen:
+
+    ~/polyqa.log                                     auf dem Rechner mit der Oberfläche
+                                                     (Windows: C:\Users\<name>\polyqa.log),
+                                                     alle Fehler samt aufgerufenem Befehl
+    <datenordner>/polyqa_work/<gruppe>/job.log       auf dem Server, Tracebacks der Rechnung
+
 ## Last und Speicher auf dem Server
 
 Die Rechnung läuft mit `nice 19` und `ionice` niedrigster Stufe, also nur mit

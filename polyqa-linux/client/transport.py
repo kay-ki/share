@@ -44,7 +44,8 @@ def call(cfg, command, on_progress=None, **extra):
             remote.append(f"--{key}")
         elif value is not False:
             remote += [f"--{key}", str(value)]
-    process = subprocess.Popen(ssh_command(cfg, remote), stdout=subprocess.PIPE,
+    command_line = ssh_command(cfg, remote)
+    process = subprocess.Popen(command_line, stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, text=True, creationflags=NO_WINDOW)
     chunks = []
     reader = threading.Thread(target=lambda: chunks.append(process.stdout.read()))
@@ -62,9 +63,14 @@ def call(cfg, command, on_progress=None, **extra):
     process.wait()
     out = (chunks[0] or "").strip()
     if not out:
-        detail = " / ".join(noise[-3:]) or f"Aufruf endet mit Code {process.returncode}"
-        raise RuntimeError(detail)
+        text = (f"{noise[-1]}\n\n" + "\n".join(noise)) if noise else f"Aufruf endet mit Code {process.returncode}"
+        fail(command, command_line, text)
     result = json.loads(out)
     if "error" in result:
-        raise RuntimeError(result["error"])
+        fail(command, command_line, "\n\n".join(t for t in (result["error"], result.get("trace")) if t))
     return result
+
+
+def fail(command, command_line, text):
+    settings.log(f"{command}: {text}\nBefehl: {' '.join(shlex.quote(a) for a in command_line)}")
+    raise RuntimeError(text)

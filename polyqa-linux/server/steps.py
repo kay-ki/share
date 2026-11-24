@@ -346,7 +346,7 @@ def to_wgs84(srs, x, y):
         source.SetAxisMappingStrategy(osr.OAMS_TRADITIONAL_GIS_ORDER)
     except AttributeError:
         source = srs
-    point = osr.CoordinateTransformation(source, target).TransformPoint(x, y)
+    point = osr.CoordinateTransformation(source, target).TransformPoint(float(x), float(y))
     return point[1], point[0]
 
 

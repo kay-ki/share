@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from pathlib import Path
 
 DEFAULTS = {
@@ -31,6 +32,15 @@ INTEGER = {"chaikin_iterations", "connectivity", "preview_px"}
 
 def config_path():
     return Path.home() / ".polyqa.json"
+
+
+def log_path():
+    return Path.home() / "polyqa.log"
+
+
+def log(text):
+    with open(log_path(), "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S}  {text.rstrip()}\n\n")
 
 
 def load():

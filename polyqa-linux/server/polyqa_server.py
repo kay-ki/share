@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -124,7 +125,7 @@ def cmd_state(args):
     metrics = {}
     for stem in [*stems, steps.FOLDER_STEM]:
         payload = steps.read_metrics(work, stem)
-        metrics[stem] = {k: {f: v[f] for f in ("gauges", "before", "after", "flag") if f in v}
+        metrics[stem] = {k: {f: v[f] for f in ("gauges", "before", "after", "flag", "trace") if f in v}
                          for k, v in payload.items()}
     return {"steps": {k: step_state(work, k, stems) for k in steps.STEP_KEYS},
             "metrics": metrics, "job": job_status(work)}
@@ -144,7 +145,12 @@ def clear_step(work, stems, step):
 def error_payload(exc):
     text = "Arbeitsspeicher-Grenze erreicht" if isinstance(exc, MemoryError) else (str(exc) or type(exc).__name__)
     return {"path": None, "flag": True, "before": "", "after": "nicht gelaufen",
-            "gauges": [["Fehler", text, "flag"], ["", "", ""], ["", "", ""]]}
+            "gauges": [["Fehler", text, "flag"], ["", "", ""], ["", "", ""]],
+            "trace": traceback.format_exc()}
+
+
+def log_failure(step, stem, payload):
+    print(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {step} {stem}\n{payload['trace']}", flush=True)
 
 
 def run_raster(step, raster, work, stem, p):
@@ -167,6 +173,7 @@ def run_step(folder, rasters, work, out_root, step, p, progress):
             payload = steps.merge(work, out_root, folder.name, [s for _, s in rasters], p["folder_pattern"])
         except Exception as exc:
             payload = error_payload(exc)
+            log_failure(step, steps.FOLDER_STEM, payload)
         steps.write_metrics(work, steps.FOLDER_STEM, "merge", payload)
         return payload["flag"]
     flagged = False
@@ -178,6 +185,7 @@ def run_step(folder, rasters, work, out_root, step, p, progress):
                 done = run_raster(step, raster, work, stem, p)
             except Exception as exc:
                 done = error_payload(exc)
+                log_failure(step, stem, done)
             steps.write_metrics(work, stem, step, done)
         flagged = flagged or done["flag"]
     return flagged
@@ -208,7 +216,7 @@ def cmd_start(args):
         proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True, env={**os.environ, **THREAD_ENV})
     write_job(work, {"pid": proc.pid, "steps": [s for s in args.step.split(",") if s], "done": [], "step": None,
-                     "index": 0, "total": 0, "stem": "", "flag": None, "error": None, "finished": False})
+                     "index": 0, "total": 0, "stem": "", "flag": None, "error": None, "trace": None, "finished": False})
     return {"started": proc.pid}
 
 
@@ -223,7 +231,7 @@ def cmd_job(args):
             break
         time.sleep(0.1)
     job.update({"pid": os.getpid(), "steps": [s for s in args.step.split(",") if s], "done": [], "flag": None,
-                "error": None, "finished": False})
+                "error": None, "trace": None, "finished": False})
 
     def progress(i, n, stem):
         job.update({"index": i, "total": n, "stem": stem})
@@ -242,6 +250,8 @@ def cmd_job(args):
                 break
     except Exception as exc:
         job["error"] = f"{type(exc).__name__}: {exc}"
+        job["trace"] = traceback.format_exc()
+        traceback.print_exc()
     job["finished"] = True
     write_job(work, job)
     return {"finished": True}
@@ -293,7 +303,7 @@ def main():
     try:
         result = COMMANDS[args.command](args)
     except Exception as exc:
-        print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}), flush=True)
+        print(json.dumps({"error": f"{type(exc).__name__}: {exc}", "trace": traceback.format_exc()}), flush=True)
         return 1
     print(json.dumps(result), flush=True)
     return 0

@@ -140,9 +140,13 @@ class Worker(QObject):
                     self.progress.emit(f"{self.labels[job['step']]}: {job['stem']} "
                                        f"({job['index']} von {job['total']})")
                 if job["error"]:
-                    self.failed.emit(job["step"] or "", job["error"])
+                    text = "\n\n".join(t for t in (job["error"], job.get("trace")) if t)
+                    settings.log(f"{self.folder} {job['step']}: {text}")
+                    self.failed.emit(job["step"] or "", text)
                     return
                 if job["broken"]:
+                    settings.log(f"{self.folder} {job['step']}: Rechnung auf dem Server abgebrochen "
+                                 f"(Ausgabe in polyqa_work/{self.folder}/job.log)")
                     self.failed.emit(job["step"] or "", "angehalten oder abgebrochen – „Ordner rechnen“ "
                                                          "macht beim nächsten offenen Raster weiter")
                     return
@@ -205,6 +209,7 @@ class Connection(QDialog):
             self.edits[key] = add_field(form, label, str(cfg[key] or ""), hint, 420)
         self.note = QLabel("")
         self.note.setObjectName("muted")
+        self.note.setTextInteractionFlags(Qt.TextSelectableByMouse)
         form.addRow(self.note)
         test = QPushButton("Verbindung testen")
         test.clicked.connect(self.test)
@@ -224,7 +229,7 @@ class Connection(QDialog):
             found = transport.call(self.values(), "discover")["folders"]
             self.note.setText(f"Verbindung steht, {len(found)} Ordner gefunden")
         except Exception as exc:
-            self.note.setText(str(exc))
+            self.note.setText(f"{first_line(str(exc))}\nganzer Fehler in {settings.log_path()}")
 
 
 class Parameters(QDialog):
@@ -317,6 +322,8 @@ class Window(QWidget):
         self.raster_index = 0
         self.token = 0
         self.thread = None
+        self.error = ""
+        self.logged = set()
         self.cache = Path(tempfile.gettempdir()) / "polyqa_cache"
         self.cache.mkdir(exist_ok=True)
         self.pool = QThreadPool.globalInstance()
@@ -447,16 +454,54 @@ class Window(QWidget):
         self.single.clicked.connect(self.run_single)
         self.progress = QLabel()
         self.progress.setObjectName("progress")
+        self.progress.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.copy_btn = QPushButton("Fehler kopieren")
+        self.copy_btn.setObjectName("quiet")
+        self.copy_btn.setToolTip(f"Alle Fehler stehen auch in {settings.log_path()}")
+        self.copy_btn.clicked.connect(self.copy_error)
+        self.copy_btn.hide()
         actions.addWidget(self.go)
         actions.addWidget(self.single)
         actions.addStretch(1)
         actions.addWidget(self.progress)
+        actions.addWidget(self.copy_btn)
         stage.addLayout(actions)
 
         holder = QWidget()
         holder.setLayout(stage)
         body.addWidget(holder, 1)
         outer.addLayout(body, 1)
+
+    def set_status(self, text, full=""):
+        self.progress.setText(text)
+        self.error = full
+        self.update_copy()
+
+    def show_error(self, full):
+        self.set_status(first_line(full), full)
+
+    def error_detail(self):
+        if self.error:
+            return self.error
+        payload = self.payload() if self.folders and self.steps else None
+        if payload and payload.get("trace"):
+            stem = self.folder_stem if self.step == "merge" else self.stem
+            return f"{self.folder['name']} / {stem} / {self.labels[self.step]}\n\n{payload['trace']}"
+        return ""
+
+    def update_copy(self):
+        self.copy_btn.setVisible(bool(self.error_detail()))
+
+    def copy_error(self):
+        QApplication.clipboard().setText(self.error_detail())
+
+    def log_step_errors(self):
+        for stem, by_step in self.state["metrics"].items():
+            for step, payload in by_step.items():
+                key = (self.folder["name"], stem, step, payload.get("trace"))
+                if payload.get("trace") and key not in self.logged:
+                    self.logged.add(key)
+                    settings.log(f"{self.folder['name']} / {stem} / {step}\n{payload['trace']}")
 
     def line(self, vertical=False):
         frame = QFrame()
@@ -503,7 +548,7 @@ class Window(QWidget):
         self.folders, self.state = [], None
         self.refresh()
         if settings.configured(self.cfg):
-            self.progress.setText("verbinde …")
+            self.set_status("verbinde …")
             self.ask("discover", "discover")
 
     def request_state(self):
@@ -519,10 +564,10 @@ class Window(QWidget):
         if token != self.token:
             return
         if error:
-            self.progress.setText(error)
+            self.show_error(error)
             return
         if kind == "discover":
-            self.progress.setText("")
+            self.set_status("")
             self.steps = payload["steps"]
             self.labels = {k: label for k, label, _ in payload["steps"]}
             self.folders = payload["folders"]
@@ -534,6 +579,7 @@ class Window(QWidget):
                 self.refresh()
         elif kind == "state":
             self.state = payload
+            self.log_step_errors()
             job = payload.get("job")
             if job and job["running"] and self.thread is None:
                 self.start(job["steps"], fresh=False, attach=True)
@@ -543,7 +589,7 @@ class Window(QWidget):
             self.refresh()
             self.load_previews()
         elif kind == "stop":
-            self.progress.setText("wird angehalten …")
+            self.set_status("wird angehalten …")
         elif kind.startswith("preview:"):
             side = kind.split(":", 1)[1]
             png = payload.get("png")
@@ -575,7 +621,7 @@ class Window(QWidget):
     def pick_folder(self, index):
         self.folder_index = index
         self.raster_index = 0
-        self.progress.setText("")
+        self.set_status("")
         self.ask_state()
 
     def pick_step(self, index):
@@ -642,6 +688,7 @@ class Window(QWidget):
             title.setObjectName("gaugeName")
             number = QLabel(value)
             number.setObjectName("gaugeValue")
+            number.setTextInteractionFlags(Qt.TextSelectableByMouse)
             number.setStyleSheet("color: #ab1f68;" if verdict == "flag" else "color: #10242e;")
             box.addWidget(title)
             box.addWidget(number)
@@ -658,6 +705,7 @@ class Window(QWidget):
             self.build_gauges(None)
             self.go.setEnabled(False)
             self.single.setEnabled(False)
+            self.update_copy()
             return
         key, label, how = self.steps[self.step_index]
         self.title.setText(label)
@@ -680,6 +728,7 @@ class Window(QWidget):
             self.go.setText("Ordner neu rechnen")
         self.go.setEnabled(running or self.state is not None)
         self.single.setEnabled(not running and self.state is not None)
+        self.update_copy()
 
     def load_previews(self):
         self.token += 1
@@ -723,7 +772,7 @@ class Window(QWidget):
         self.worker = Worker(self.cfg, self.folder["name"], steps, self.labels, fresh, attach)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
-        self.worker.progress.connect(self.progress.setText)
+        self.worker.progress.connect(self.set_status)
         self.worker.step_done.connect(self.on_step_done)
         self.worker.failed.connect(self.on_failed)
         self.worker.finished.connect(self.on_finished)
@@ -734,7 +783,7 @@ class Window(QWidget):
     def on_step_done(self, step, flagged):
         self.step_index = [k for k, _, _ in self.steps].index(step)
         if flagged:
-            self.progress.setText("Prüfung schlägt an – weiter erst nach Klärung")
+            self.set_status("Prüfung schlägt an – weiter erst nach Klärung")
         self.request_state()
 
     @Slot(str, str)
@@ -743,7 +792,7 @@ class Window(QWidget):
         if step in order:
             self.step_index = order.index(step)
             message = f"{self.labels[step]}: {message}"
-        self.progress.setText(message)
+        self.show_error(message)
         self.stop(keep_message=True)
 
     @Slot()
@@ -756,10 +805,14 @@ class Window(QWidget):
             self.thread.wait()
             self.thread = None
         if not keep_message:
-            self.progress.setText("")
+            self.set_status("")
         self.refresh()
         if self.folders:
             self.request_state()
+
+
+def first_line(text):
+    return next((line for line in text.splitlines() if line.strip()), text)
 
 
 def launch():
