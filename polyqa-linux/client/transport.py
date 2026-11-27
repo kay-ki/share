@@ -13,6 +13,23 @@ APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path
 BUNDLED_SSH = APP_DIR / "openssh" / "ssh.exe"
 
 
+def has_gdal(python):
+    try:
+        return subprocess.run([python, "-c", "from osgeo import gdal"], capture_output=True,
+                              timeout=30, creationflags=NO_WINDOW).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def fill_local(cfg):
+    script = APP_DIR / "server" / "polyqa_server.py"
+    if cfg["ssh_host"] or cfg["server_script"] or not script.exists():
+        return cfg
+    wrapper = str(APP_DIR / "server" / "python3-polyqa")
+    python = "python3" if has_gdal("python3") or not has_gdal(wrapper) else wrapper
+    return {**cfg, "server_script": str(script), "server_python": python}
+
+
 def ssh_program(cfg):
     if cfg["ssh_program"]:
         return cfg["ssh_program"]

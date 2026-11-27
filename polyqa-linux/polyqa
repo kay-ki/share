@@ -1,0 +1,19 @@
+#!/bin/sh
+DIR="$(dirname "$(readlink -f "$0")")"
+LOG="$HOME/polyqa.log"
+[ -t 2 ] || exec 2>>"$LOG"
+for PY in "$POLYQA_PYTHON" "$HOME/polyqa-venv/bin/python" "$DIR/venv/bin/python" python3; do
+    [ -n "$PY" ] || continue
+    if "$PY" -c "import PySide6.QtWidgets" 2>/dev/null; then
+        exec "$PY" "$DIR/client/main.py" "$@"
+    fi
+done
+MSG="polyqa: kein Python mit PySide6 gefunden (gesucht: ~/polyqa-venv, $DIR/venv, python3). Einrichten: README, Abschnitt Lokal-Modus."
+printf '%s  %s\n\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$MSG" >> "$LOG"
+echo "$MSG" >&2
+if command -v zenity >/dev/null; then
+    zenity --error --text="$MSG"
+elif command -v xmessage >/dev/null; then
+    xmessage "$MSG"
+fi
+exit 1

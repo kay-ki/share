@@ -28,6 +28,8 @@ import render
 import steps
 
 RASTER_SUFFIXES = {".tif", ".tiff", ".png"}
+RASTER_STEPS = [k for k in steps.STEP_KEYS if k != "merge"]
+MARKS = {"ok", "bad"}
 THREAD_ENV = {"OPENBLAS_NUM_THREADS": "1", "OMP_NUM_THREADS": "1", "GDAL_NUM_THREADS": "1"}
 
 
@@ -110,12 +112,41 @@ def job_status(work):
     return job
 
 
+def review_file(work):
+    return work / "review.json"
+
+
+def read_review(work):
+    p = review_file(work)
+    return json.loads(p.read_text()) if p.exists() else {}
+
+
+def write_review(work, review):
+    work.mkdir(parents=True, exist_ok=True)
+    tmp = review_file(work).with_suffix(".part")
+    tmp.write_text(json.dumps(review, indent=1))
+    os.replace(tmp, review_file(work))
+
+
+def summary(work, stems):
+    review = read_review(work)
+    done = issues = 0
+    for stem in stems:
+        found = steps.read_metrics(work, stem)
+        done += all(k in found for k in RASTER_STEPS)
+        issues += any(v.get("flag") for v in found.values())
+    marks = [review.get(s) for s in stems]
+    return {"total": len(stems), "done": done, "issues": issues,
+            "good": marks.count("ok"), "bad": marks.count("bad")}
+
+
 def cmd_discover(args):
-    data, _, _ = roots(args)
-    folders = [{"name": d.name,
-                "rasters": [str(r) for r, _ in rasters],
-                "stems": [stem for _, stem in rasters]}
-               for d, rasters in collect(data, args.params.get("blacklist", []))]
+    data, work_root, _ = roots(args)
+    folders = []
+    for d, rasters in collect(data, args.params.get("blacklist", [])):
+        stems = [stem for _, stem in rasters]
+        folders.append({"name": d.name, "rasters": [str(r) for r, _ in rasters], "stems": stems,
+                        "summary": summary(work_root / d.name, stems)})
     return {"steps": steps.STEPS, "folders": folders, "folder_stem": steps.FOLDER_STEM}
 
 
@@ -128,7 +159,22 @@ def cmd_state(args):
         metrics[stem] = {k: {f: v[f] for f in ("gauges", "before", "after", "flag", "trace") if f in v}
                          for k, v in payload.items()}
     return {"steps": {k: step_state(work, k, stems) for k in steps.STEP_KEYS},
-            "metrics": metrics, "job": job_status(work)}
+            "metrics": metrics, "job": job_status(work),
+            "review": read_review(work), "summary": summary(work, stems)}
+
+
+def cmd_mark(args):
+    _, rasters, work, _ = open_folder(args)
+    stems = [stem for _, stem in rasters]
+    if args.stem not in stems:
+        raise RuntimeError(f"Raster {args.stem} nicht im Ordner")
+    review = read_review(work)
+    if args.value in MARKS:
+        review[args.stem] = args.value
+    else:
+        review.pop(args.stem, None)
+    write_review(work, review)
+    return {"review": review, "summary": summary(work, stems)}
 
 
 def clear_step(work, stems, step):
@@ -140,6 +186,10 @@ def clear_step(work, stems, step):
         payload = steps.read_metrics(work, stem)
         if payload.pop(step, None) is not None:
             steps.store_metrics(work, stem, payload)
+    if step != "merge":
+        review = read_review(work)
+        if any(s in review for s in stems):
+            write_review(work, {k: v for k, v in review.items() if k not in stems})
 
 
 def error_payload(exc):
@@ -284,7 +334,7 @@ def cmd_preview(args):
 
 
 COMMANDS = {"discover": cmd_discover, "state": cmd_state, "start": cmd_start, "job": cmd_job,
-            "status": cmd_status, "stop": cmd_stop, "preview": cmd_preview}
+            "status": cmd_status, "stop": cmd_stop, "preview": cmd_preview, "mark": cmd_mark}
 
 
 def main():
@@ -297,6 +347,7 @@ def main():
     parser.add_argument("--step", default="")
     parser.add_argument("--side", default="")
     parser.add_argument("--params", default="{}")
+    parser.add_argument("--value", default="")
     parser.add_argument("--fresh", action="store_true")
     args = parser.parse_args()
     args.params = json.loads(args.params)

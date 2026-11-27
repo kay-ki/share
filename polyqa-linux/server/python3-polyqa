@@ -1,6 +1,8 @@
 #!/bin/sh
 # python3 with GDAL & co. from the unpacked Debian packages, nothing installed system-wide
-ROOT="$(dirname "$(readlink -f "$0")")/../debian12/ohne-installation"
+HERE="$(dirname "$(readlink -f "$0")")"
+ROOT="$HERE/../debian12/ohne-installation"
+[ -d "$ROOT" ] || ROOT="$HERE/../pakete/debian12/ohne-installation"
 LIB="$ROOT/usr/lib/x86_64-linux-gnu"
 export LD_LIBRARY_PATH="$LIB:$ROOT/lib/x86_64-linux-gnu:$LIB/blas:$LIB/lapack:$ROOT/usr/lib:$ROOT/usr/lib/ogdi/4.1${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PYTHONPATH="$ROOT/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}"

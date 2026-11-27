@@ -1,0 +1,28 @@
+#!/bin/sh
+DIR="$(dirname "$(readlink -f "$0")")"
+APPS="$HOME/.local/share/applications"
+DESK="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+chmod +x "$DIR/polyqa" "$DIR/server/python3-polyqa"
+mkdir -p "$APPS"
+cat > "$APPS/polyqa.desktop" <<D
+[Desktop Entry]
+Type=Application
+Name=polyqa
+Comment=Sidescan-Mosaike zu Polygonen
+Exec="$DIR/polyqa"
+Icon=$DIR/client/polyqa.svg
+Terminal=false
+Categories=Science;Graphics;
+D
+echo "Startmenü: $APPS/polyqa.desktop"
+UNDO="\"$APPS/polyqa.desktop\""
+if [ -d "$DESK" ]; then
+    cp "$APPS/polyqa.desktop" "$DESK/polyqa.desktop"
+    chmod +x "$DESK/polyqa.desktop"
+    # xfdesktop 4.18 starts desktop files without asking only if this checksum matches
+    gio set -t string "$DESK/polyqa.desktop" metadata::xfce-exe-checksum \
+        "$(sha256sum "$DESK/polyqa.desktop" | cut -d' ' -f1)" 2>/dev/null
+    echo "Schreibtisch: $DESK/polyqa.desktop"
+    UNDO="$UNDO \"$DESK/polyqa.desktop\""
+fi
+echo "Wieder weg: rm $UNDO"

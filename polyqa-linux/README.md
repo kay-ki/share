@@ -12,6 +12,8 @@ der Server nur die GDAL-Pakete der Distribution. Kein gemeinsames Environment.
 
 ## Was wo liegt
 
+    polyqa               Starter für Linux: sucht das Python mit PySide6, startet client/main.py
+    starter-einrichten   legt polyqa ins Startmenü und auf den Schreibtisch
     client/              Oberfläche (Python-Quellen)
     server/              Verarbeitung, server/vendor/ = Shapely 2.0.7 entpackt,
                          server/python3-polyqa = python3 mit den entpackten Paketen
@@ -78,8 +80,27 @@ dem es läuft. So lässt sich die Oberfläche direkt auf dem Server starten und 
     ~/polyqa-venv/bin/pip install --no-index --find-links /opt/polyqa/debian12/wheels PySide6_Essentials
     scp -r client benutzer@server:/opt/polyqa/      # vom eigenen Rechner aus
 
-Dann von Windows: `ssh -X benutzer@server ~/polyqa-venv/bin/python /opt/polyqa/client/main.py`.
+Dann von Windows: `ssh -X benutzer@server /opt/polyqa/polyqa`.
 Über die Leitung gehen dabei Bildschirminhalte statt PNGs, das ist spürbar zäher.
+
+### Starten mit Doppelklick (Desktop auf dem Server, z. B. XFCE)
+
+`polyqa` und `starter-einrichten` neben `client/` und `server/` legen, also nach
+`/opt/polyqa/`, dann einmal im Terminal:
+
+    /opt/polyqa/starter-einrichten
+
+Danach steht polyqa im Startmenü und auf dem Schreibtisch. Der Starter nimmt das
+erste Python, das PySide6 hat: `$POLYQA_PYTHON`, `~/polyqa-venv`,
+`/opt/polyqa/venv`, `python3`. Kein venv aktivieren, nichts kompilieren: Änderungen
+an `client/*.py` und `server/*.py` gelten beim nächsten Start. Findet er kein
+passendes Python, sagt er das in einem Fenster und in `~/polyqa.log`.
+
+Beim allerersten Start ohne `~/.polyqa.json` füllt polyqa „Python auf dem Server“
+und „polyqa_server.py“ selbst aus: `python3`, wenn das GDAL hat (Weg B), sonst
+`server/python3-polyqa` (Weg A). Offen bleibt nur der Datenordner, dafür gibt es
+„wählen …“. Der Starter läuft auch direkt aus einer Kopie dieses Ordners;
+`server/python3-polyqa` findet die Pakete dann unter `pakete/debian12/`.
 
 Beim ersten Start über „Verbindung" eintragen:
 
@@ -105,8 +126,20 @@ Hostschlüssel führt weiter zum Abbruch.
 
 ## Ablauf
 
-Links die Ordner, darunter die sieben Schritte des aktiven Ordners. „Ordner
-rechnen" läuft alle offenen Schritte nacheinander durch und bleibt stehen, sobald
+Links die Ordner, daneben die Dateien des aktiven Ordners, oben die sieben
+Schritte als Reiter. Hinter jedem Ordner steht, wie viele Raster alle sechs
+Rasterschritte hinter sich haben (`3/12`), dazu in Rot die Zahl der Raster mit
+Prüfung oder Fehler (`2 !`) und der als falsch markierten (`1 ✗`). Hinter jeder
+Datei steht ihr Stand: `offen`, `2/6`, `fertig`, `Prüfung` oder `Fehler`, dahinter
+die Markierung. Die Reiter zeigen den Stand der gewählten Datei: grau erledigt,
+rot Prüfung.
+
+Mit „✓ passt“ und „✗ passt nicht“ über den Bildern lässt sich jede Datei von Hand
+abhaken; noch einmal klicken nimmt die Markierung zurück. Die Markierungen liegen
+auf dem Server in `polyqa_work/<gruppe>/review.json` und verfallen, wenn ein
+Rasterschritt für den Ordner neu gerechnet wird.
+
+„Ordner rechnen" läuft alle offenen Schritte nacheinander durch und bleibt stehen, sobald
 eine Prüfung anschlägt; die Ansicht springt dabei auf den jeweils fertigen
 Schritt. Danach heißt der Knopf „trotzdem weiterrechnen". „nur diesen Schritt"
 rechnet einen Schritt für alle Raster neu, dann werden auch alle Bilder ab diesem
@@ -172,6 +205,7 @@ Anteil nahe 100 %, nach dem Glätten muss er gegen null gehen.
     <datenordner>/polyqa_work/<gruppe>/metrics/<raster>.json  alle Prüfzahlen
     <datenordner>/polyqa_work/<gruppe>/preview/               die Bilder
     <datenordner>/polyqa_work/<gruppe>/job.json, job.log      laufende Rechnung
+    <datenordner>/polyqa_work/<gruppe>/review.json            Markierungen passt / passt nicht
     <ausgabeordner>/<gruppe>.gpkg                             Ergebnis
 
 Gerendert wird dort, wo die Daten liegen: Über die Leitung gehen ein PNG von rund

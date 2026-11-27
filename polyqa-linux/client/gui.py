@@ -2,9 +2,9 @@ import base64
 import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, Signal, Slot
-from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFormLayout, QFrame,
+from PySide6.QtCore import QObject, QRunnable, Qt, QThread, QThreadPool, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QFontMetrics, QIcon, QPixmap
+from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
                                QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QHBoxLayout,
                                QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget)
 
@@ -41,6 +41,19 @@ QLabel#stepName { font-size: 13.5px; color: #4a6270; }
 QLabel#stepDone { font-size: 13.5px; color: #93a5ac; }
 QLabel#stepActive { font-size: 13.5px; color: #10242e; font-weight: 600; }
 QLabel#flag { color: #ab1f68; }
+QLabel#ok { color: #2f7d4f; }
+QLabel#fileName { font-size: 13.5px; }
+QLabel#railHead { color: #7d939d; font-size: 12px; padding: 4px 12px 6px 12px; }
+QWidget#files { background: #f7f8f5; }
+QPushButton#tab, QPushButton#tabDone, QPushButton#tabFlag, QPushButton#tabActive {
+    background: transparent; border: none; border-bottom: 2px solid transparent;
+    padding: 9px 10px 7px 10px; font-size: 13.5px; }
+QPushButton#tab { color: #4a6270; }
+QPushButton#tabDone { color: #93a5ac; }
+QPushButton#tabFlag { color: #ab1f68; }
+QPushButton#tabActive { color: #10242e; font-weight: 600; border-bottom-color: #1f6273; }
+QPushButton#markOk { background: #e3f0e7; border-color: #2f7d4f; color: #2f7d4f; font-weight: 600; }
+QPushButton#markBad { background: #f6e4ec; border-color: #ab1f68; color: #ab1f68; font-weight: 600; }
 QLineEdit { border: 1px solid #c7d1cc; padding: 5px; background: #ffffff; }
 QGraphicsView { border: none; background: #eef1ed; }
 QFrame#sep { background: #dde4df; }
@@ -50,18 +63,23 @@ QFrame#sep { background: #dde4df; }
 class Row(QWidget):
     clicked = Signal()
 
-    def __init__(self, left, right, left_style, right_style, indent):
+    def __init__(self, left, left_style, rights, left_width):
         super().__init__()
         self.setObjectName("row")
+        self.setAttribute(Qt.WA_StyledBackground)
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(12 + indent, 5, 12, 5)
+        lay.setContentsMargins(12, 5, 12, 5)
         lay.setSpacing(8)
-        a, b = QLabel(left), QLabel(right)
+        a = QLabel()
         a.setObjectName(left_style)
-        b.setObjectName(right_style)
+        a.setText(QFontMetrics(a.font()).elidedText(left, Qt.ElideMiddle, left_width))
+        a.setToolTip(left)
         lay.addWidget(a)
         lay.addStretch(1)
-        lay.addWidget(b)
+        for text, style in rights:
+            b = QLabel(text)
+            b.setObjectName(style)
+            lay.addWidget(b)
         self.setCursor(Qt.PointingHandCursor)
 
     def mousePressEvent(self, event):
@@ -159,9 +177,18 @@ class Worker(QObject):
         self.finished.emit()
 
 
-def add_field(form, label, text, hint, width):
+def add_field(form, label, text, hint, width, pick=False):
     edit = QLineEdit(text)
     edit.setMinimumWidth(width)
+    line = edit
+    if pick:
+        edit.pick = QPushButton("wählen …")
+        edit.pick.clicked.connect(lambda: pick_folder(edit))
+        line = QWidget()
+        row = QHBoxLayout(line)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(edit, 1)
+        row.addWidget(edit.pick)
     note = QLabel(hint)
     note.setObjectName("hint")
     note.setWordWrap(True)
@@ -170,12 +197,18 @@ def add_field(form, label, text, hint, width):
     box = QVBoxLayout()
     box.setContentsMargins(0, 0, 0, 6)
     box.setSpacing(2)
-    box.addWidget(edit)
+    box.addWidget(line)
     box.addWidget(note)
     holder = QWidget()
     holder.setLayout(box)
     form.addRow(label, holder)
     return edit
+
+
+def pick_folder(edit):
+    chosen = QFileDialog.getExistingDirectory(edit, "Ordner wählen", edit.text())
+    if chosen:
+        edit.setText(chosen)
 
 
 class Connection(QDialog):
@@ -198,6 +231,7 @@ class Connection(QDialog):
                "Auf dem Server. Jeder Unterordner mit .tif-Dateien wird links ein Eintrag."),
               ("out_root", "Ausgabeordner",
                "Auf dem Server. Leer für polyqa_out im Datenordner.")]
+    PICK = ("data_root", "out_root")
 
     def __init__(self, cfg, parent):
         super().__init__(parent)
@@ -206,7 +240,10 @@ class Connection(QDialog):
         form = QFormLayout(self)
         self.edits = {}
         for key, label, hint in self.FIELDS:
-            self.edits[key] = add_field(form, label, str(cfg[key] or ""), hint, 420)
+            self.edits[key] = add_field(form, label, str(cfg[key] or ""), hint, 420,
+                                        pick=key in self.PICK)
+        self.edits["ssh_host"].textChanged.connect(self.local_changed)
+        self.local_changed()
         self.note = QLabel("")
         self.note.setObjectName("muted")
         self.note.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -218,6 +255,11 @@ class Connection(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         form.addRow(buttons)
+
+    def local_changed(self):
+        local = not self.edits["ssh_host"].text().strip()
+        for key in self.PICK:
+            self.edits[key].pick.setEnabled(local)
 
     def values(self):
         return {**self.cfg, **{key: self.edits[key].text().strip() for key, _, _ in self.FIELDS}}
@@ -333,6 +375,8 @@ class Window(QWidget):
         self.resize(1360, 880)
         self.build()
         self.connect_server()
+        if not settings.configured(self.cfg):
+            QTimer.singleShot(0, self.edit_connection)
 
     def build(self):
         outer = QVBoxLayout(self)
@@ -347,8 +391,12 @@ class Window(QWidget):
         connection.clicked.connect(self.edit_connection)
         params = QPushButton("Parameter")
         params.clicked.connect(self.edit_parameters)
+        log = QPushButton("Log öffnen")
+        log.setObjectName("quiet")
+        log.clicked.connect(self.open_log)
         head.addWidget(self.head_label)
         head.addStretch(1)
+        head.addWidget(log)
         head.addWidget(connection)
         head.addWidget(params)
         outer.addLayout(head)
@@ -357,23 +405,17 @@ class Window(QWidget):
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
-        self.rail = QWidget()
-        self.rail.setObjectName("rail")
-        self.rail_layout = QVBoxLayout(self.rail)
-        self.rail_layout.setContentsMargins(0, 8, 0, 8)
-        self.rail_layout.setSpacing(0)
-        self.rail_layout.addStretch(1)
-        scroll = QScrollArea()
-        scroll.setWidget(self.rail)
-        scroll.setWidgetResizable(True)
-        scroll.setFixedWidth(262)
-        scroll.setFrameShape(QFrame.NoFrame)
-        body.addWidget(scroll)
-        body.addWidget(self.line(vertical=True))
+        self.folder_layout = self.column(body, "rail", "Ordner", 230)
+        self.file_layout = self.column(body, "files", "Dateien", 270)
 
         stage = QVBoxLayout()
         stage.setContentsMargins(0, 0, 0, 0)
         stage.setSpacing(0)
+        self.tabs = QHBoxLayout()
+        self.tabs.setContentsMargins(8, 0, 8, 0)
+        self.tabs.setSpacing(0)
+        stage.addLayout(self.tabs)
+        stage.addWidget(self.line())
         title_row = QVBoxLayout()
         title_row.setContentsMargins(16, 14, 16, 10)
         title_row.setSpacing(2)
@@ -399,8 +441,15 @@ class Window(QWidget):
         self.counter.setObjectName("muted")
         self.counter.setAlignment(Qt.AlignCenter)
         self.counter.setFixedWidth(64)
+        self.mark_ok = QPushButton("✓ passt")
+        self.mark_bad = QPushButton("✗ passt nicht")
+        self.mark_ok.clicked.connect(lambda: self.mark("ok"))
+        self.mark_bad.clicked.connect(lambda: self.mark("bad"))
         pick_row.addWidget(self.raster_label)
         pick_row.addStretch(1)
+        pick_row.addWidget(self.mark_ok)
+        pick_row.addWidget(self.mark_bad)
+        pick_row.addSpacing(18)
         pick_row.addWidget(self.prev_btn)
         pick_row.addWidget(self.counter)
         pick_row.addWidget(self.next_btn)
@@ -471,6 +520,36 @@ class Window(QWidget):
         holder.setLayout(stage)
         body.addWidget(holder, 1)
         outer.addLayout(body, 1)
+
+    def column(self, body, name, caption, width):
+        inner = QWidget()
+        inner.setObjectName(name)
+        lay = QVBoxLayout(inner)
+        lay.setContentsMargins(0, 8, 0, 8)
+        lay.setSpacing(0)
+        head = QLabel(caption)
+        head.setObjectName("railHead")
+        lay.addWidget(head)
+        lay.addStretch(1)
+        scroll = QScrollArea()
+        scroll.setWidget(inner)
+        scroll.setWidgetResizable(True)
+        scroll.setFixedWidth(width)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        body.addWidget(scroll)
+        body.addWidget(self.line(vertical=True))
+        return lay
+
+    def open_log(self):
+        path = settings.log_path()
+        path.touch()
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def mark(self, value):
+        current = self.state["review"].get(self.stem) if self.state else None
+        self.pool.start(CallJob(0, "mark", self.cfg, "mark", self.signals, folder=self.folder["name"],
+                                stem=self.stem, value="" if current == value else value))
 
     def set_status(self, text, full=""):
         self.progress.setText(text)
@@ -561,7 +640,7 @@ class Window(QWidget):
 
     @Slot(int, str, object, str)
     def call_done(self, token, kind, payload, error):
-        if token != self.token:
+        if token != self.token and kind != "mark":
             return
         if error:
             self.show_error(error)
@@ -579,6 +658,7 @@ class Window(QWidget):
                 self.refresh()
         elif kind == "state":
             self.state = payload
+            self.folder["summary"] = payload["summary"]
             self.log_step_errors()
             job = payload.get("job")
             if job and job["running"] and self.thread is None:
@@ -588,6 +668,12 @@ class Window(QWidget):
                 self.step_index = self.first_open_step()
             self.refresh()
             self.load_previews()
+        elif kind == "mark":
+            if self.state:
+                self.state["review"] = payload["review"]
+                self.state["summary"] = payload["summary"]
+                self.folder["summary"] = payload["summary"]
+            self.refresh()
         elif kind == "stop":
             self.set_status("wird angehalten …")
         elif kind.startswith("preview:"):
@@ -630,7 +716,10 @@ class Window(QWidget):
         self.load_previews()
 
     def step_raster(self, delta):
-        self.raster_index = (self.raster_index + delta) % len(self.folder["stems"])
+        self.pick_raster((self.raster_index + delta) % len(self.folder["stems"]))
+
+    def pick_raster(self, index):
+        self.raster_index = index
         self.refresh()
         self.load_previews()
 
@@ -643,37 +732,87 @@ class Window(QWidget):
         b.horizontalScrollBar().setValue(a.horizontalScrollBar().value())
         b.verticalScrollBar().setValue(a.verticalScrollBar().value())
 
-    def build_rail(self):
-        while self.rail_layout.count() > 1:
-            item = self.rail_layout.takeAt(0)
+    def clear(self, layout, keep):
+        while layout.count() > keep:
+            item = layout.takeAt(keep - 1 if keep else 0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
+
+    def add_row(self, layout, row, active, on_click):
+        if active:
+            row.setObjectName("rowActive")
+        row.clicked.connect(on_click)
+        layout.insertWidget(layout.count() - 1, row)
+
+    def build_folders(self):
+        self.clear(self.folder_layout, 2)
         for index, folder in enumerate(self.folders):
-            active = index == self.folder_index
-            right = ""
-            if active and self.state:
-                values = list(self.step_states().values())
-                done = values.count("fertig")
-                right = ("Prüfung" if "flag" in values else
-                         "fertig" if done == len(values) else
-                         "offen" if done == 0 else f"{done} von {len(values)}")
-            row = Row(folder["name"], right, "folderName",
-                      "flag" if right == "Prüfung" else "folderDim", 0)
-            if active:
-                row.setObjectName("rowActive")
-            row.clicked.connect(lambda i=index: self.pick_folder(i))
-            self.rail_layout.insertWidget(self.rail_layout.count() - 1, row)
-            if not active:
-                continue
-            for s, (key, label, _) in enumerate(self.steps):
-                state = self.step_states().get(key, "")
-                style = "stepActive" if s == self.step_index else (
-                    "stepDone" if state == "fertig" else "stepName")
-                row = Row(label, "Prüfung" if state == "flag" else "", style, "flag", 14)
-                if s == self.step_index:
-                    row.setObjectName("rowActive")
-                row.clicked.connect(lambda i=s: self.pick_step(i))
-                self.rail_layout.insertWidget(self.rail_layout.count() - 1, row)
+            s = folder["summary"]
+            rights = [(f"{s['done']}/{s['total']}", "ok" if s["done"] == s["total"] else "folderDim")]
+            if s["issues"]:
+                rights.append((f"{s['issues']} !", "flag"))
+            if s["bad"]:
+                rights.append((f"{s['bad']} ✗", "flag"))
+            row = Row(folder["name"], "folderName", rights, 230 - 40 - 34 * len(rights))
+            self.add_row(self.folder_layout, row, index == self.folder_index,
+                         lambda i=index: self.pick_folder(i))
+
+    def file_status(self, stem):
+        found = self.state["metrics"].get(stem, {})
+        keys = [k for k, _, _ in self.steps if k != "merge"]
+        if any(v.get("trace") for v in found.values()):
+            return "Fehler", "flag"
+        if any(v.get("flag") for v in found.values()):
+            return "Prüfung", "flag"
+        done = sum(k in found for k in keys)
+        if done == len(keys):
+            return "fertig", "ok"
+        return ("offen", "folderDim") if done == 0 else (f"{done}/{len(keys)}", "folderDim")
+
+    def build_files(self):
+        self.clear(self.file_layout, 2)
+        if not self.folder or not self.state:
+            return
+        for index, stem in enumerate(self.folder["stems"]):
+            mark = self.state["review"].get(stem)
+            rights = [self.file_status(stem)]
+            if mark:
+                rights.append(("✓", "ok") if mark == "ok" else ("✗", "flag"))
+            row = Row(self.raster_name(index), "fileName", rights, 270 - 40 - 70 - 16 * (len(rights) - 1))
+            self.add_row(self.file_layout, row, index == self.raster_index,
+                         lambda i=index: self.pick_raster(i))
+
+    def build_tabs(self):
+        self.clear(self.tabs, 0)
+        found = {}
+        if self.state and self.folders:
+            stem_metrics = self.state["metrics"]
+            found = {k: (stem_metrics.get(self.folder_stem if k == "merge" else self.stem) or {}).get(k)
+                     for k, _, _ in self.steps}
+        for s, (key, label, _) in enumerate(self.steps):
+            done = found.get(key)
+            tab = QPushButton(f"{s + 1}  {label}")
+            tab.setObjectName("tabActive" if s == self.step_index else
+                              "tabFlag" if done and done.get("flag") else
+                              "tabDone" if done else "tab")
+            tab.setCursor(Qt.PointingHandCursor)
+            tab.clicked.connect(lambda _=False, i=s: self.pick_step(i))
+            self.tabs.addWidget(tab)
+        self.tabs.addStretch(1)
+
+    def raster_name(self, index):
+        depth = self.folder["stems"][index].count("__") + 1
+        return "/".join(Path(self.folder["rasters"][index]).parts[-depth:])
+
+    def update_marks(self):
+        mark = self.state["review"].get(self.stem) if self.state and self.folders else None
+        self.mark_ok.setObjectName("markOk" if mark == "ok" else "")
+        self.mark_bad.setObjectName("markBad" if mark == "bad" else "")
+        for button in (self.mark_ok, self.mark_bad):
+            button.setEnabled(self.state is not None and bool(self.folders))
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def build_gauges(self, payload):
         while self.gauges.count():
@@ -697,7 +836,10 @@ class Window(QWidget):
             self.gauges.addWidget(holder, 1)
 
     def refresh(self):
-        self.build_rail()
+        self.build_folders()
+        self.build_files()
+        self.build_tabs()
+        self.update_marks()
         running = self.thread is not None
         if not self.folders or not self.steps:
             self.title.setText("Keine Verbindung" if not settings.configured(self.cfg) else "Keine Ordner")
@@ -710,8 +852,7 @@ class Window(QWidget):
         key, label, how = self.steps[self.step_index]
         self.title.setText(label)
         self.how.setText(how)
-        depth = self.stem.count("__") + 1
-        self.raster_label.setText("/".join(Path(self.folder["rasters"][self.raster_index]).parts[-depth:]))
+        self.raster_label.setText(self.raster_name(self.raster_index))
         self.counter.setText(f"{self.raster_index + 1} / {len(self.folder['rasters'])}")
         payload = self.payload()
         self.build_gauges(payload)
@@ -816,9 +957,10 @@ def first_line(text):
 
 
 def launch():
-    cfg = settings.load()
     app = QApplication.instance() or QApplication([])
+    cfg = transport.fill_local(settings.load())
     app.setStyleSheet(STYLE)
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().parent / "polyqa.svg")))
     window = Window(cfg)
     window.show()
     return app, window
